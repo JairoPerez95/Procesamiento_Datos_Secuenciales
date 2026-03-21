@@ -15,7 +15,7 @@
 
 ## 1. Resumen (Abstract)
 
-Este proyecto implementa el proceso de inferencia sobre **ProphetNet**, un modelo Transformer encoder-decoder desarrollado por Microsoft Research, aplicado a la tarea de generación automática de titulares a partir de artículos de noticias en inglés (*headline generation*). Se utilizan los pesos preentrenados del modelo `microsoft/prophetnet-large-uncased-cnndm`, ajustado sobre el dataset CNN/DailyMail. La implementación incluye el pipeline completo de inferencia (tokenización → generación con beam search → decodificación), inspección directa de las matrices de proyección Q, K y V por capa, extracción y visualización interactiva del mecanismo de cross-attention con selector de capa (superficial a profunda), evaluación cuantitativa con métricas ROUGE calculadas dinámicamente (Precision, Recall y F1), y una interfaz interactiva desarrollada con Streamlit que permite ingresar cualquier artículo, compararlo contra un titular de referencia y observar la inferencia del modelo en tiempo real. Los resultados obtenidos muestran un ROUGE-1 promedio de 0.331, ROUGE-2 de 0.080 y ROUGE-L de 0.288 sobre diez artículos de referencia.
+Este proyecto implementa el proceso de inferencia sobre **ProphetNet**, un modelo Transformer encoder-decoder desarrollado por Microsoft Research, aplicado a la tarea de generación automática de titulares a partir de artículos de noticias en inglés (*headline generation*). Se utilizan los pesos preentrenados del modelo `microsoft/prophetnet-large-uncased-cnndm`, ajustado sobre el dataset CNN/DailyMail. La implementación incluye el pipeline completo de inferencia (tokenización → generación con beam search → decodificación), inspección directa de las matrices de proyección Q, K y V por capa, extracción y visualización interactiva del mecanismo de cross-attention con selector de capa (superficial a profunda), evaluación cuantitativa con métricas ROUGE calculadas dinámicamente (Precision, Recall y F1), y una interfaz interactiva desarrollada con Streamlit que permite ingresar cualquier artículo, compararlo contra un titular de referencia y observar la inferencia del modelo en tiempo real. Los resultados obtenidos muestran un ROUGE-1 promedio de 0.377, ROUGE-2 de 0.141 y ROUGE-L de 0.317 sobre diez artículos de referencia.
 
 ---
 
@@ -117,7 +117,21 @@ L = −Σₜ [ log P(yₜ₊₁ | y<t, x) + log P(yₜ₊₂ | y<t, x) ]
 
 Al obligar al modelo a "planear" dos tokens hacia adelante durante el entrenamiento, aprende representaciones que son útiles para predecir tanto el siguiente token como el subsiguiente, desincentivando el *local coherence shortcut* (copiar frases del artículo) y produciendo texto con mayor coherencia global.
 
-> **Importante — comportamiento en inferencia:** el predicting stream opera **únicamente durante el entrenamiento**. En inferencia (`model.generate()`), solo actúa el main stream de forma autoregresiva, idéntico a un decoder estándar. La ventaja del n-stream está codificada en los pesos aprendidos, no en la arquitectura de inferencia.
+> **Importante — comportamiento en inferencia:** el predicting stream opera **únicamente 
+> durante el entrenamiento**. En inferencia (`model.generate()`), solo actúa el main 
+> stream de forma autoregresiva, idéntico a un decoder estándar. La ventaja del n-stream 
+> está codificada en los pesos aprendidos, no en la arquitectura de inferencia.
+
+**Detalle de máscaras por stream:**
+
+| Stream | Puede ver | Bloqueado |
+|---|---|---|
+| Main stream | `y₁, ..., y_{t-1}` (todos los tokens previos) | `y_t` en adelante |
+| Predict stream | `y₁, ..., y_{t-1}` (todos los tokens previos) | `y_t` (posición actual) |
+
+El predict stream bloquea explícitamente la posición `t` para forzar al modelo a predecir
+`y_{t+2}` sin ver el token inmediatamente anterior, desincentivando el atajo de copiar
+contexto local y produciendo representaciones más globales.
 
 **Comparación con otros modelos encoder-decoder:**
 
