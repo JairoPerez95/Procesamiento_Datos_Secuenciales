@@ -1,0 +1,10 @@
+streamlit
+transformers
+torch
+sentencepiece
+matplotlib
+seaborn
+numpy
+rouge-score
+pandas
+Pillow
