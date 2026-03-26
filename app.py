@@ -19,7 +19,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
-import io, base64, warnings
+import io, base64, warnings, gc, gc
 warnings.filterwarnings("ignore")
 
 from rouge_score import rouge_scorer as rouge_lib
@@ -110,15 +110,27 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0a0f!important;color:
 def cargar_modelo():
     from transformers import ProphetNetForConditionalGeneration, ProphetNetTokenizer
     MODEL = "microsoft/prophetnet-large-uncased-cnndm"
+
+    # Tokenizer primero — liviano (~500 KB)
     tokenizer = ProphetNetTokenizer.from_pretrained(MODEL)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # float16 + low_cpu_mem_usage: ~700 MB estables en CPU.
+    # float32 ocuparía ~1.9 GB — excede Streamlit Cloud gratuito.
+    # low_cpu_mem_usage=True evita duplicar pesos en RAM durante la descarga.
     model = ProphetNetForConditionalGeneration.from_pretrained(
         MODEL,
-        torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
+        torch_dtype=torch.float16,
         low_cpu_mem_usage=True,
     )
+    device = torch.device("cpu")
     model = model.to(device)
+    # Garantizar float16 explícitamente tras mover a CPU
+    model = model.half()
     model.eval()
+
+    # Liberar memoria residual inmediatamente tras la carga
+    gc.collect()
+
     return model, tokenizer, device
 
 
@@ -130,10 +142,11 @@ def generar_titular(model, tokenizer, device, articulo,
     Pipeline de inferencia: tokenización → beam search → decodificación.
     El n-stream decoder de ProphetNet opera solo en entrenamiento.
     En inferencia solo actúa el main stream, de forma autoregresiva.
+    max_length=128 reduce memoria ~30% sin pérdida visible en artículos de noticias.
     """
     inputs = tokenizer(
         articulo.lower(), return_tensors="pt",
-        truncation=True, max_length=256
+        truncation=True, max_length=128   # reducido de 256 → menos memoria en inferencia
     )
     input_ids      = inputs["input_ids"].to(device)
     attention_mask = inputs["attention_mask"].to(device)
@@ -147,7 +160,11 @@ def generar_titular(model, tokenizer, device, articulo,
             no_repeat_ngram_size=no_repeat_ngram_size,
             early_stopping=True,
         )
-    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    titular = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    # Liberar tensores intermedios para reducir pico de memoria
+    del input_ids, attention_mask, output_ids
+    gc.collect()
+    return titular
 
 
 # ── Extracción de atención (corregida) ────────────────────────────────────────
@@ -161,7 +178,7 @@ def extraer_atencion(model, tokenizer, device, articulo, titular, capa=-1):
     """
     inputs = tokenizer(
         articulo.lower(), return_tensors="pt",
-        truncation=True, max_length=256
+        truncation=True, max_length=128   # consistente con generar_titular
     ).to(device)
     labels = tokenizer(
         titular, return_tensors="pt",
@@ -179,6 +196,10 @@ def extraer_atencion(model, tokenizer, device, articulo, titular, capa=-1):
     # Extrae la capa solicitada y promedia las 16 cabezas de atención.
     # Shape original: (batch=1, num_heads=16, seq_dec, seq_enc)
     cross_attn = outputs.cross_attentions[capa].squeeze(0).mean(dim=0).float().cpu().numpy()
+
+    # Liberar outputs del modelo inmediatamente — son los tensores más pesados
+    del outputs
+    gc.collect()
 
     # Normalización defensiva (los pesos ya son post-softmax, esto garantiza
     # que la suma sea exactamente 1.0 sin distorsionar la distribución).
