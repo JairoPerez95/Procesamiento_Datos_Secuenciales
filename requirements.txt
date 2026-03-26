@@ -8,3 +8,4 @@ numpy
 rouge-score
 pandas
 Pillow
+accelerate
