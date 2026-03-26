@@ -111,12 +111,12 @@ def cargar_modelo():
     from transformers import ProphetNetForConditionalGeneration, ProphetNetTokenizer
     MODEL = "microsoft/prophetnet-large-uncased-cnndm"
     tokenizer = ProphetNetTokenizer.from_pretrained(MODEL)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ProphetNetForConditionalGeneration.from_pretrained(
         MODEL,
-        torch_dtype=torch.float16,
+        torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
         low_cpu_mem_usage=True,
     )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     model.eval()
     return model, tokenizer, device
